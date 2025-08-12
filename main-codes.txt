@@ -1,0 +1,122 @@
+middleware.ts
+
+import NextAuth from "next-auth";
+import { authConfig } from "./auth.config";
+
+export default NextAuth(authConfig).auth;
+
+export const config = {
+  // https://nextjs.org/docs/app/building-your-application/routing/middleware#matcher
+  matcher: ["/((?!api|_next/static|_next/image|.*\\.png$).*)"],
+};
+
+
+
+
+auth.config.ts
+
+import type { NextAuthConfig } from "next-auth";
+
+export const authConfig = {
+  pages: {
+    signIn: "/login",
+  },
+  callbacks: {
+    authorized({ auth, request: { nextUrl } }) {
+      const isLoggedIn = !!auth?.user;
+      const isOnDashboard = nextUrl.pathname.startsWith("/dashboard");
+      if (isOnDashboard) {
+        if (isLoggedIn) return true;
+        return false; // Redirect unauthenticated users to login page
+      } else if (isLoggedIn) {
+        return Response.redirect(new URL("/dashboard", nextUrl));
+      }
+      return true;
+    },
+  },
+  providers: [], // Add providers with an empty array for now
+} satisfies NextAuthConfig;
+
+
+
+auth.ts
+
+import NextAuth from "next-auth";
+import Credentials from "next-auth/providers/credentials";
+import { authConfig } from "./auth.config";
+import { z } from "zod";
+import type { User } from "@/app/lib/definitions";
+import bcrypt from "bcrypt";
+import postgres from "postgres";
+
+const sql = postgres(process.env.POSTGRES_URL!, { ssl: "require" });
+
+async function getUser(email: string): Promise<User | undefined> {
+  try {
+    const user = await sql<User[]>`SELECT * FROM users WHERE email=${email}`;
+    return user[0];
+  } catch (error) {
+    console.error("Failed to fetch user:", error);
+    throw new Error("Failed to fetch user.");
+  }
+}
+
+export const { auth, signIn, signOut } = NextAuth({
+  ...authConfig,
+  providers: [
+    Credentials({
+      async authorize(credentials) {
+        const parsedCredentials = z
+          .object({ email: z.string().email(), password: z.string().min(6) })
+          .safeParse(credentials);
+
+        if (parsedCredentials.success) {
+          const { email, password } = parsedCredentials.data;
+          const user = await getUser(email);
+          if (!user) return null;
+          const passwordsMatch = await bcrypt.compare(password, user.password);
+
+          if (passwordsMatch) return user;
+        }
+
+        console.log("Invalid credentials");
+        return null;
+      },
+    }),
+  ],
+});
+
+
+
+.env
+
+# Recommended for most uses
+DATABASE_URL=postgres://neondb_owner:npg_EQFbfjWKd6t4@ep-icy-morning-adbxm0do-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require
+
+# For uses requiring a connection without pgbouncer
+DATABASE_URL_UNPOOLED=postgresql://neondb_owner:npg_EQFbfjWKd6t4@ep-icy-morning-adbxm0do.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require
+
+# Parameters for constructing your own connection string
+PGHOST=ep-icy-morning-adbxm0do-pooler.c-2.us-east-1.aws.neon.tech
+PGHOST_UNPOOLED=ep-icy-morning-adbxm0do.c-2.us-east-1.aws.neon.tech
+PGUSER=neondb_owner
+PGDATABASE=neondb
+PGPASSWORD=npg_EQFbfjWKd6t4
+
+# Parameters for Vercel Postgres Templates
+POSTGRES_URL=postgres://neondb_owner:npg_EQFbfjWKd6t4@ep-icy-morning-adbxm0do-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require
+POSTGRES_URL_NON_POOLING=postgres://neondb_owner:npg_EQFbfjWKd6t4@ep-icy-morning-adbxm0do.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require
+POSTGRES_USER=neondb_owner
+POSTGRES_HOST=ep-icy-morning-adbxm0do-pooler.c-2.us-east-1.aws.neon.tech
+POSTGRES_PASSWORD=npg_EQFbfjWKd6t4
+POSTGRES_DATABASE=neondb
+POSTGRES_URL_NO_SSL=postgres://neondb_owner:npg_EQFbfjWKd6t4@ep-icy-morning-adbxm0do-pooler.c-2.us-east-1.aws.neon.tech/neondb
+POSTGRES_PRISMA_URL=postgres://neondb_owner:npg_EQFbfjWKd6t4@ep-icy-morning-adbxm0do-pooler.c-2.us-east-1.aws.neon.tech/neondb?connect_timeout=15&sslmode=require
+
+# Neon Auth environment variables for Next.js
+NEXT_PUBLIC_STACK_PROJECT_ID=5c3c899b-fe7a-4e83-896a-c05a8825b765
+NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=pck_0n9nvrwscmkkgzd99k5hmhkvq361y3t5tdhrmxq8yf23r
+STACK_SECRET_SERVER_KEY=ssk_k67kaf6vkgfew89t5t7a6q2k6tghqjyeq55tpv5ehb26g
+
+
+AUTH_SECRET=bf145c78ce63de67ba330a39b260c016
